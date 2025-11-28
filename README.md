@@ -1,6 +1,6 @@
 # Prometheus Cardinality Explorer
 
-A 3D visualization tool for discovering high cardinality metrics in Prometheus/Thanos.
+A 3D visualization tool for discovering high cardinality metrics by parsing raw Prometheus exposition format from `/metrics` endpoints.
 
 ## The Problem
 
@@ -13,59 +13,78 @@ Finding the source is hard when label names are generic (like `_label_0`, `_labe
 
 ## The Solution
 
-This tool builds a **tree visualization** where:
-- **Root** = metric name
-- **Children** = label key/value pairs
-- **Node size** = number of series passing through
-- **Node color** = cardinality level (green/yellow/red)
-
-You can visually see where cardinality "explodes" and identify problematic labels by their actual values.
+This tool:
+1. **Parses** raw Prometheus metrics from any `/metrics` endpoint
+2. **Builds a tree** where root = metric name, children = label key/values
+3. **Visualizes** in 3D so you can see where cardinality explodes
+4. **Shows actual values** so even with generic labels you can identify patterns
 
 ## Quick Start
 
-### Option 1: Use Sample Data
+### Option 1: From a /metrics Endpoint
 
 ```bash
-# Generate sample data
-python3 fetch_metrics.py --sample
-
-# Start a local server
-python3 -m http.server 8080
-
-# Open http://localhost:8080 in your browser
-```
-
-### Option 2: Query Your Prometheus
-
-```bash
-# Fetch real data from Prometheus
-python3 fetch_metrics.py --url http://your-prometheus:9090
-
-# With authentication
-python3 fetch_metrics.py --url http://prometheus:9090 --bearer-token YOUR_TOKEN
+# Fetch from your application's metrics endpoint
+python3 fetch_metrics.py --url http://your-app:8080/metrics
 
 # Start visualization
+python3 -m http.server 8080
+# Open http://localhost:8080
+```
+
+### Option 2: From a Saved Metrics File
+
+```bash
+# If you have a metrics dump
+python3 fetch_metrics.py --file ./metrics.txt
+
+python3 -m http.server 8080
+```
+
+### Option 3: Try with Sample Data
+
+```bash
+python3 fetch_metrics.py --sample
 python3 -m http.server 8080
 ```
 
 ## Usage
 
-### Python Script Options
-
 ```
 python3 fetch_metrics.py [OPTIONS]
 
+Source (one required):
+  --url URL              Fetch from a /metrics endpoint
+  --file, -f FILE        Load from a local file
+  --sample               Generate sample data for testing
+
 Options:
-  --url URL            Prometheus/Thanos base URL (default: http://localhost:9090)
-  --output, -o FILE    Output JSON file (default: metrics_tree.json)
-  --top, -n N          Number of top metrics to analyze (default: 20)
-  --limit, -l N        Max series per metric (default: 5000)
-  --sample             Generate sample data instead of querying
-  --bearer-token TOKEN Bearer token for authentication
+  --output, -o FILE      Output JSON file (default: metrics_tree.json)
+  --top, -n N            Number of top metrics to process (default: 50)
+  --min-series N         Minimum series count to include (default: 1)
+  --bearer-token TOKEN   Bearer token for authentication
   --basic-auth USER:PASS Basic auth credentials
+  --timeout SECONDS      Request timeout (default: 30)
+  --save-raw FILE        Save raw metrics for debugging
 ```
 
-### Visualization Controls
+### Examples
+
+```bash
+# Basic usage
+python3 fetch_metrics.py --url http://localhost:8080/metrics
+
+# With auth
+python3 fetch_metrics.py --url http://app:8080/metrics --bearer-token $TOKEN
+
+# Top 100 metrics, save raw data
+python3 fetch_metrics.py --url http://app:8080/metrics --top 100 --save-raw raw.txt
+
+# From file, minimum 10 series per metric
+python3 fetch_metrics.py --file metrics.txt --min-series 10
+```
+
+## Visualization Controls
 
 | Control | Action |
 |---------|--------|
@@ -75,14 +94,7 @@ Options:
 | **R** | Reset camera |
 | **Search** | Filter nodes by label value |
 
-## Understanding the Visualization
-
-### Node Colors
-- 🟢 **Green**: Low cardinality (<100 series)
-- 🟡 **Yellow**: Medium cardinality (100-1000 series)
-- 🔴 **Red**: High cardinality (>1000 series)
-
-### Tree Structure
+## Understanding the Tree
 
 ```
 http_requests_total (root) → 50K series
@@ -91,9 +103,13 @@ http_requests_total (root) → 50K series
 │   │   └── _label_2="user-12345" → 100 series  ← PROBLEM: user IDs!
 │   └── _label_1="web" → 2K series
 └── _label_0="eu-west-1" → 15K series
+    └── ... (explosion visible here)
 ```
 
-When you see a branch suddenly explode with many children, that's your high cardinality culprit.
+### Node Colors
+- 🟢 **Green**: Low cardinality (<100 series)
+- 🟡 **Yellow**: Medium cardinality (100-1000 series)
+- 🔴 **Red**: High cardinality (>1000 series)
 
 ## Common High Cardinality Patterns
 
@@ -108,27 +124,29 @@ When you see a branch suddenly explode with many children, that's your high card
 
 ## Files
 
-- `fetch_metrics.py` - Python script to fetch and process metrics
-- `index.html` - Three.js visualization
-- `metrics_tree.json` - Generated data file (output)
+| File | Description |
+|------|-------------|
+| `fetch_metrics.py` | Parser and tree builder |
+| `index.html` | Three.js 3D visualization |
+| `metrics_tree.json` | Generated data (output) |
 
 ## Requirements
 
 - Python 3.7+
-- `requests` library (`pip install requests`)
-- Modern web browser with WebGL support
+- `requests` library (only for URL fetching): `pip install requests`
+- Modern web browser with WebGL
 
-## Architecture
+## How It Works
 
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ Prometheus/     │────▶│ fetch_metrics│────▶│ metrics_tree.   │
-│ Thanos          │     │ .py          │     │ json            │
+│ /metrics        │────▶│ fetch_metrics│────▶│ metrics_tree.   │
+│ endpoint        │     │ .py          │     │ json            │
 └─────────────────┘     └──────────────┘     └────────┬────────┘
                                                       │
-                                                      ▼
-                                             ┌─────────────────┐
-                                             │ index.html      │
-                                             │ (Three.js)      │
-                                             └─────────────────┘
+  Prometheus exposition format:                       ▼
+  http_requests{method="GET"} 123         ┌─────────────────┐
+  http_requests{method="POST"} 456        │ index.html      │
+                                          │ (Three.js 3D)   │
+                                          └─────────────────┘
 ```
