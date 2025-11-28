@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prometheus Cardinality Explorer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Header */
+        #header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 15px 20px;
+            background: linear-gradient(180deg, rgba(10,10,15,0.95) 0%, rgba(10,10,15,0) 100%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            z-index: 100;
+        }
+
+        #header h1 {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        #header h1 span {
+            color: #ff6b6b;
+        }
+
+        /* Metric selector */
+        #metric-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #metric-selector label {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        #metric-select {
+            padding: 8px 12px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.9em;
+            min-width: 250px;
+            cursor: pointer;
+        }
+
+        #metric-select:hover {
+            border-color: #555;
+        }
+
+        /* Search */
+        #search-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: auto;
+        }
+
+        #search-input {
+            padding: 8px 12px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.9em;
+            width: 200px;
+        }
+
+        #search-input:focus {
+            outline: none;
+            border-color: #4ecdc4;
+        }
+
+        /* Side Panel */
+        #side-panel {
+            position: absolute;
+            top: 70px;
+            right: 20px;
+            width: 350px;
+            max-height: calc(100vh - 100px);
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 100;
+        }
+
+        #side-panel h2 {
+            font-size: 1.1em;
+            color: #4ecdc4;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .panel-section {
+            margin-bottom: 20px;
+        }
+
+        .panel-section h3 {
+            font-size: 0.85em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #252535;
+        }
+
+        .stat-label {
+            color: #aaa;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .stat-value.high {
+            color: #ff6b6b;
+        }
+
+        .stat-value.medium {
+            color: #ffd93d;
+        }
+
+        .stat-value.low {
+            color: #6bcb77;
+        }
+
+        /* Node details */
+        #node-details {
+            display: none;
+        }
+
+        #node-details.visible {
+            display: block;
+        }
+
+        .node-path {
+            font-family: monospace;
+            font-size: 0.85em;
+            background: #1a1a2e;
+            padding: 10px;
+            border-radius: 6px;
+            word-break: break-all;
+            margin-bottom: 15px;
+        }
+
+        .children-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .child-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: #1a1a2e;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .child-item:hover {
+            background: #252540;
+        }
+
+        .child-name {
+            font-family: monospace;
+            font-size: 0.85em;
+            color: #4ecdc4;
+        }
+
+        .child-count {
+            font-size: 0.8em;
+            color: #888;
+        }
+
+        /* Legend */
+        #legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 100;
+        }
+
+        #legend h3 {
+            font-size: 0.8em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+            font-size: 0.85em;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
+
+        /* Controls help */
+        #controls-help {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 100;
+            font-size: 0.8em;
+            color: #888;
+        }
+
+        #controls-help kbd {
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Loading */
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 200;
+        }
+
+        #loading.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #4ecdc4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* File input */
+        #file-input-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 200;
+            background: rgba(20, 20, 30, 0.98);
+            padding: 40px;
+            border-radius: 12px;
+            border: 1px solid #333;
+        }
+
+        #file-input-container.hidden {
+            display: none;
+        }
+
+        #file-input-container h2 {
+            margin-bottom: 20px;
+            color: #4ecdc4;
+        }
+
+        #file-input-container p {
+            color: #888;
+            margin-bottom: 20px;
+        }
+
+        #file-drop-zone {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 40px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        #file-drop-zone:hover,
+        #file-drop-zone.dragover {
+            border-color: #4ecdc4;
+            background: rgba(78, 205, 196, 0.1);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #4ecdc4;
+            color: #000;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #3dbdb5;
+        }
+
+        .btn-secondary {
+            background: #333;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #444;
+        }
+
+        /* Tooltip */
+        #tooltip {
+            position: absolute;
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #4ecdc4;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 0.85em;
+            pointer-events: none;
+            z-index: 300;
+            display: none;
+            max-width: 300px;
+        }
+
+        #tooltip.visible {
+            display: block;
+        }
+
+        #tooltip .tooltip-title {
+            font-weight: 600;
+            color: #4ecdc4;
+            margin-bottom: 5px;
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        #tooltip .tooltip-stat {
+            color: #aaa;
+        }
+
+        /* Analysis panel */
+        #analysis-panel {
+            position: absolute;
+            top: 70px;
+            left: 20px;
+            width: 300px;
+            max-height: calc(100vh - 200px);
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 100;
+        }
+
+        #analysis-panel h2 {
+            font-size: 1.1em;
+            color: #ff6b6b;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .warning-item {
+            background: rgba(255, 107, 107, 0.1);
+            border-left: 3px solid #ff6b6b;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .warning-item .label-name {
+            font-family: monospace;
+            color: #ff6b6b;
+            font-weight: 600;
+        }
+
+        .warning-item .label-count {
+            font-size: 0.85em;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container"></div>
+
+        <!-- Header -->
+        <div id="header">
+            <h1>Prometheus <span>Cardinality</span> Explorer</h1>
+            <div id="metric-selector">
+                <label for="metric-select">Metric:</label>
+                <select id="metric-select">
+                    <option value="">Select a metric...</option>
+                </select>
+            </div>
+            <div id="search-container">
+                <input type="text" id="search-input" placeholder="Search labels...">
+            </div>
+        </div>
+
+        <!-- File input -->
+        <div id="file-input-container">
+            <h2>Load Metrics Data</h2>
+            <p>Drop a JSON file or use sample data to explore cardinality</p>
+            <div id="file-drop-zone">
+                <p>Drag & drop metrics_tree.json here</p>
+                <p style="color: #666; font-size: 0.9em;">or click to browse</p>
+            </div>
+            <input type="file" id="file-input" accept=".json">
+            <br>
+            <button class="btn" id="load-sample-btn">Load Sample Data</button>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="hidden">
+            <div class="spinner"></div>
+            <p>Building visualization...</p>
+        </div>
+
+        <!-- Analysis Panel -->
+        <div id="analysis-panel" style="display: none;">
+            <h2>High Cardinality Warnings</h2>
+            <div id="warnings-list"></div>
+        </div>
+
+        <!-- Side Panel -->
+        <div id="side-panel" style="display: none;">
+            <h2>Overview</h2>
+            <div class="panel-section">
+                <h3>Statistics</h3>
+                <div class="stat-row">
+                    <span class="stat-label">Total Series</span>
+                    <span class="stat-value" id="stat-total-series">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Tree Depth</span>
+                    <span class="stat-value" id="stat-tree-depth">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Label Count</span>
+                    <span class="stat-value" id="stat-label-count">-</span>
+                </div>
+            </div>
+
+            <div id="node-details">
+                <div class="panel-section">
+                    <h3>Selected Node</h3>
+                    <div class="node-path" id="selected-node-path">-</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Series Count</span>
+                        <span class="stat-value" id="selected-node-count">-</span>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h3>Children (<span id="children-count">0</span>)</h3>
+                    <div class="children-list" id="children-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div id="legend" style="display: none;">
+            <h3>Cardinality</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #6bcb77;"></div>
+                <span>Low (&lt;100 series)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffd93d;"></div>
+                <span>Medium (100-1000)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ff6b6b;"></div>
+                <span>High (&gt;1000 series)</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div id="controls-help" style="display: none;">
+            <p><kbd>Click</kbd> Select node</p>
+            <p><kbd>Scroll</kbd> Zoom in/out</p>
+            <p><kbd>Drag</kbd> Rotate view</p>
+            <p><kbd>R</kbd> Reset view</p>
+        </div>
+
+        <!-- Tooltip -->
+        <div id="tooltip">
+            <div class="tooltip-title" id="tooltip-title"></div>
+            <div class="tooltip-stat" id="tooltip-stat"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Global state
+        let scene, camera, renderer, controls;
+        let currentData = null;
+        let currentTree = null;
+        let nodeObjects = [];
+        let edgeObjects = [];
+        let selectedNode = null;
+        let hoveredNode = null;
+
+        // Color scheme
+        const COLORS = {
+            low: 0x6bcb77,
+            medium: 0xffd93d,
+            high: 0xff6b6b,
+            root: 0x4ecdc4,
+            edge: 0x333344,
+            selected: 0xffffff
+        };
+
+        // Initialize Three.js scene
+        function initScene() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a0f);
+
+            camera = new THREE.PerspectiveCamera(
+                60,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                10000
+            );
+            camera.position.set(0, 50, 150);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.rotateSpeed = 0.5;
+            controls.zoomSpeed = 1.2;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 100, 50);
+            scene.add(directionalLight);
+
+            // Grid helper
+            const gridHelper = new THREE.GridHelper(500, 50, 0x222233, 0x111122);
+            gridHelper.position.y = -50;
+            scene.add(gridHelper);
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            renderer.domElement.addEventListener('mousemove', onMouseMove);
+            renderer.domElement.addEventListener('click', onClick);
+            document.addEventListener('keydown', onKeyDown);
+
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // Pulse selected node
+            if (selectedNode) {
+                const scale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
+                selectedNode.mesh.scale.setScalar(selectedNode.baseScale * scale);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Get color based on series count
+        function getNodeColor(count, isRoot = false) {
+            if (isRoot) return COLORS.root;
+            if (count > 1000) return COLORS.high;
+            if (count > 100) return COLORS.medium;
+            return COLORS.low;
+        }
+
+        // Get node size based on series count
+        function getNodeSize(count, isRoot = false) {
+            if (isRoot) return 8;
+            const minSize = 1;
+            const maxSize = 6;
+            const logCount = Math.log10(Math.max(count, 1));
+            const logMax = Math.log10(10000);
+            return minSize + (maxSize - minSize) * Math.min(logCount / logMax, 1);
+        }
+
+        // Build 3D tree from data
+        function buildTree(treeData) {
+            // Clear existing objects
+            nodeObjects.forEach(obj => scene.remove(obj.mesh));
+            edgeObjects.forEach(obj => scene.remove(obj));
+            nodeObjects = [];
+            edgeObjects = [];
+            selectedNode = null;
+
+            const horizontalSpacing = 25;
+            const verticalSpacing = 30;
+            const depthSpacing = 20;
+
+            let maxDepth = 0;
+            let nodeCount = 0;
+
+            // Calculate layout - radial tree
+            function layoutNode(node, depth, angleStart, angleEnd, parentPos = null) {
+                maxDepth = Math.max(maxDepth, depth);
+                nodeCount++;
+
+                const isRoot = depth === 0;
+                const radius = depth * horizontalSpacing;
+                const angle = (angleStart + angleEnd) / 2;
+
+                let x, y, z;
+                if (isRoot) {
+                    x = 0;
+                    y = 0;
+                    z = 0;
+                } else {
+                    x = Math.cos(angle) * radius;
+                    y = -depth * verticalSpacing;
+                    z = Math.sin(angle) * radius;
+                }
+
+                const position = new THREE.Vector3(x, y, z);
+
+                // Create node mesh
+                const size = getNodeSize(node.count, isRoot);
+                const color = getNodeColor(node.count, isRoot);
+
+                const geometry = new THREE.SphereGeometry(size, 16, 16);
+                const material = new THREE.MeshPhongMaterial({
+                    color: color,
+                    emissive: color,
+                    emissiveIntensity: 0.2,
+                    transparent: true,
+                    opacity: 0.9
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.copy(position);
+
+                scene.add(mesh);
+
+                const nodeObj = {
+                    mesh: mesh,
+                    data: node,
+                    depth: depth,
+                    baseScale: 1,
+                    baseColor: color
+                };
+                nodeObjects.push(nodeObj);
+                mesh.userData = nodeObj;
+
+                // Create edge to parent
+                if (parentPos) {
+                    const edgeGeometry = new THREE.BufferGeometry().setFromPoints([
+                        parentPos, position
+                    ]);
+                    const edgeMaterial = new THREE.LineBasicMaterial({
+                        color: COLORS.edge,
+                        transparent: true,
+                        opacity: 0.5
+                    });
+                    const edge = new THREE.Line(edgeGeometry, edgeMaterial);
+                    scene.add(edge);
+                    edgeObjects.push(edge);
+                }
+
+                // Layout children
+                const children = node.children || [];
+                if (children.length > 0) {
+                    const childAngleSpan = (angleEnd - angleStart) / children.length;
+                    children.forEach((child, i) => {
+                        const childAngleStart = angleStart + i * childAngleSpan;
+                        const childAngleEnd = childAngleStart + childAngleSpan;
+                        layoutNode(child, depth + 1, childAngleStart, childAngleEnd, position);
+                    });
+                }
+            }
+
+            layoutNode(treeData, 0, 0, Math.PI * 2);
+
+            // Update stats
+            document.getElementById('stat-total-series').textContent = treeData.count.toLocaleString();
+            document.getElementById('stat-tree-depth').textContent = maxDepth;
+            document.getElementById('stat-label-count').textContent = nodeCount - 1;
+
+            // Center camera on tree
+            camera.position.set(0, 50, maxDepth * 40);
+            controls.target.set(0, -maxDepth * verticalSpacing / 2, 0);
+            controls.update();
+        }
+
+        // Mouse interaction
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const meshes = nodeObjects.map(obj => obj.mesh);
+            const intersects = raycaster.intersectObjects(meshes);
+
+            const tooltip = document.getElementById('tooltip');
+
+            if (intersects.length > 0) {
+                const nodeObj = intersects[0].object.userData;
+                hoveredNode = nodeObj;
+
+                // Show tooltip
+                tooltip.classList.add('visible');
+                tooltip.style.left = event.clientX + 15 + 'px';
+                tooltip.style.top = event.clientY + 15 + 'px';
+
+                document.getElementById('tooltip-title').textContent = nodeObj.data.name;
+                document.getElementById('tooltip-stat').textContent = `${nodeObj.data.count.toLocaleString()} series`;
+
+                // Highlight node
+                nodeObj.mesh.material.emissiveIntensity = 0.5;
+                document.body.style.cursor = 'pointer';
+            } else {
+                if (hoveredNode) {
+                    hoveredNode.mesh.material.emissiveIntensity = 0.2;
+                }
+                hoveredNode = null;
+                tooltip.classList.remove('visible');
+                document.body.style.cursor = 'default';
+            }
+        }
+
+        function onClick(event) {
+            raycaster.setFromCamera(mouse, camera);
+            const meshes = nodeObjects.map(obj => obj.mesh);
+            const intersects = raycaster.intersectObjects(meshes);
+
+            if (intersects.length > 0) {
+                const nodeObj = intersects[0].object.userData;
+                selectNode(nodeObj);
+            }
+        }
+
+        function selectNode(nodeObj) {
+            // Deselect previous
+            if (selectedNode) {
+                selectedNode.mesh.material.color.setHex(selectedNode.baseColor);
+                selectedNode.mesh.scale.setScalar(1);
+            }
+
+            selectedNode = nodeObj;
+
+            // Highlight selected
+            selectedNode.mesh.material.color.setHex(COLORS.selected);
+
+            // Update side panel
+            document.getElementById('node-details').classList.add('visible');
+            document.getElementById('selected-node-path').textContent = nodeObj.data.name;
+            document.getElementById('selected-node-count').textContent = nodeObj.data.count.toLocaleString();
+
+            const children = nodeObj.data.children || [];
+            document.getElementById('children-count').textContent = children.length;
+
+            const childrenList = document.getElementById('children-list');
+            childrenList.innerHTML = '';
+
+            // Sort children by count descending
+            const sortedChildren = [...children].sort((a, b) => b.count - a.count);
+
+            sortedChildren.slice(0, 50).forEach(child => {
+                const item = document.createElement('div');
+                item.className = 'child-item';
+                item.innerHTML = `
+                    <span class="child-name">${child.name}</span>
+                    <span class="child-count">${child.count.toLocaleString()}</span>
+                `;
+                item.addEventListener('click', () => {
+                    const childObj = nodeObjects.find(obj => obj.data === child);
+                    if (childObj) {
+                        selectNode(childObj);
+                        // Fly to child
+                        camera.position.lerp(
+                            new THREE.Vector3(
+                                childObj.mesh.position.x + 30,
+                                childObj.mesh.position.y + 30,
+                                childObj.mesh.position.z + 30
+                            ),
+                            0.3
+                        );
+                        controls.target.copy(childObj.mesh.position);
+                    }
+                });
+                childrenList.appendChild(item);
+            });
+
+            if (children.length > 50) {
+                const more = document.createElement('div');
+                more.className = 'child-item';
+                more.innerHTML = `<span class="child-name" style="color: #888;">... and ${children.length - 50} more</span>`;
+                childrenList.appendChild(more);
+            }
+        }
+
+        function onKeyDown(event) {
+            if (event.key === 'r' || event.key === 'R') {
+                // Reset camera
+                camera.position.set(0, 50, 150);
+                controls.target.set(0, 0, 0);
+                controls.update();
+            }
+        }
+
+        // Load and process data
+        function loadData(data) {
+            currentData = data;
+
+            // Show UI elements
+            document.getElementById('file-input-container').classList.add('hidden');
+            document.getElementById('side-panel').style.display = 'block';
+            document.getElementById('legend').style.display = 'block';
+            document.getElementById('controls-help').style.display = 'block';
+            document.getElementById('analysis-panel').style.display = 'block';
+
+            // Populate metric selector
+            const select = document.getElementById('metric-select');
+            select.innerHTML = '';
+            data.trees.forEach((tree, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = `${tree.name} (${tree.count.toLocaleString()} series)`;
+                select.appendChild(option);
+            });
+
+            // Populate warnings
+            const warningsList = document.getElementById('warnings-list');
+            warningsList.innerHTML = '';
+
+            data.analyses.forEach(analysis => {
+                if (analysis.high_cardinality_labels && analysis.high_cardinality_labels.length > 0) {
+                    analysis.high_cardinality_labels.forEach(label => {
+                        const count = analysis.label_cardinalities[label];
+                        const item = document.createElement('div');
+                        item.className = 'warning-item';
+                        item.innerHTML = `
+                            <div class="label-name">${analysis.metric}</div>
+                            <div class="label-count">Label "${label}" has ${count.toLocaleString()} unique values</div>
+                        `;
+                        warningsList.appendChild(item);
+                    });
+                }
+            });
+
+            if (warningsList.children.length === 0) {
+                warningsList.innerHTML = '<p style="color: #6bcb77;">No high cardinality warnings</p>';
+            }
+
+            // Load first metric
+            if (data.trees.length > 0) {
+                select.value = 0;
+                loadMetric(0);
+            }
+        }
+
+        function loadMetric(index) {
+            const tree = currentData.trees[index];
+            currentTree = tree;
+            buildTree(tree);
+        }
+
+        // File handling
+        function handleFile(file) {
+            document.getElementById('loading').classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    document.getElementById('loading').classList.add('hidden');
+                    loadData(data);
+                } catch (err) {
+                    alert('Error parsing JSON: ' + err.message);
+                    document.getElementById('loading').classList.add('hidden');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Generate sample data
+        function generateSampleData() {
+            function randomChoice(arr) {
+                return arr[Math.floor(Math.random() * arr.length)];
+            }
+
+            function buildSampleTree(metricName, config) {
+                const root = {
+                    name: metricName,
+                    type: 'metric',
+                    count: 0,
+                    children: []
+                };
+
+                function addChildren(node, depth, labels) {
+                    if (depth >= labels.length) return;
+
+                    const labelConfig = labels[depth];
+                    const values = labelConfig.values.slice(0, labelConfig.count);
+
+                    values.forEach(value => {
+                        const child = {
+                            name: `${labelConfig.name}="${value}"`,
+                            key: labelConfig.name,
+                            value: value,
+                            count: 0,
+                            children: []
+                        };
+                        node.children.push(child);
+                        addChildren(child, depth + 1, labels);
+                    });
+                }
+
+                addChildren(root, 0, config.labels);
+
+                // Count series (leaf nodes)
+                function countSeries(node) {
+                    if (!node.children || node.children.length === 0) {
+                        node.count = 1;
+                        return 1;
+                    }
+                    let total = 0;
+                    node.children.forEach(child => {
+                        total += countSeries(child);
+                    });
+                    node.count = total;
+                    return total;
+                }
+                countSeries(root);
+
+                return root;
+            }
+
+            const regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1'];
+            const services = ['api', 'web', 'worker', 'scheduler', 'gateway'];
+            const methods = ['GET', 'POST', 'PUT', 'DELETE'];
+            const pods = Array.from({length: 50}, (_, i) => `pod-${Math.random().toString(36).substr(2, 8)}`);
+            const endpoints = ['/api/users', '/api/orders', '/api/products', '/api/auth', '/api/payments', '/health', '/metrics'];
+            const userIds = Array.from({length: 200}, (_, i) => `user-${String(i).padStart(6, '0')}`);
+
+            const trees = [
+                buildSampleTree('http_requests_total', {
+                    labels: [
+                        { name: '_label_0', values: regions, count: 4 },
+                        { name: '_label_1', values: services, count: 5 },
+                        { name: '_label_2', values: methods, count: 4 },
+                        { name: '_label_3', values: endpoints, count: 7 },
+                        { name: '_label_4', values: pods, count: 15 }
+                    ]
+                }),
+                buildSampleTree('container_memory_bytes', {
+                    labels: [
+                        { name: '_label_0', values: ['default', 'kube-system', 'monitoring', 'production'], count: 4 },
+                        { name: '_label_1', values: ['app', 'sidecar', 'proxy'], count: 3 },
+                        { name: '_label_2', values: pods, count: 25 }
+                    ]
+                }),
+                buildSampleTree('user_events_total', {
+                    labels: [
+                        { name: '_label_0', values: ['login', 'logout', 'purchase', 'view'], count: 4 },
+                        { name: '_label_1', values: userIds, count: 200 },
+                        { name: '_label_2', values: regions, count: 4 }
+                    ]
+                })
+            ];
+
+            const analyses = trees.map(tree => {
+                const labelCardinalities = {};
+                function traverse(node) {
+                    if (node.key) {
+                        if (!labelCardinalities[node.key]) {
+                            labelCardinalities[node.key] = new Set();
+                        }
+                        labelCardinalities[node.key].add(node.value);
+                    }
+                    (node.children || []).forEach(traverse);
+                }
+                traverse(tree);
+
+                const cardinalityCounts = {};
+                Object.entries(labelCardinalities).forEach(([k, v]) => {
+                    cardinalityCounts[k] = v.size;
+                });
+
+                return {
+                    metric: tree.name,
+                    total_series: tree.count,
+                    label_cardinalities: cardinalityCounts,
+                    high_cardinality_labels: Object.entries(cardinalityCounts)
+                        .filter(([_, count]) => count > 100)
+                        .map(([name, _]) => name)
+                };
+            });
+
+            return { trees, analyses, metadata: { source: 'sample_data' } };
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initScene();
+
+            // File input handling
+            const dropZone = document.getElementById('file-drop-zone');
+            const fileInput = document.getElementById('file-input');
+
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('dragover');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('dragover');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('dragover');
+                if (e.dataTransfer.files.length > 0) {
+                    handleFile(e.dataTransfer.files[0]);
+                }
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFile(e.target.files[0]);
+                }
+            });
+
+            // Sample data button
+            document.getElementById('load-sample-btn').addEventListener('click', () => {
+                document.getElementById('loading').classList.remove('hidden');
+                setTimeout(() => {
+                    const sampleData = generateSampleData();
+                    document.getElementById('loading').classList.add('hidden');
+                    loadData(sampleData);
+                }, 100);
+            });
+
+            // Metric selector
+            document.getElementById('metric-select').addEventListener('change', (e) => {
+                if (e.target.value !== '') {
+                    loadMetric(parseInt(e.target.value));
+                }
+            });
+
+            // Search
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase();
+                if (!query) {
+                    nodeObjects.forEach(obj => {
+                        obj.mesh.visible = true;
+                        obj.mesh.material.opacity = 0.9;
+                    });
+                    edgeObjects.forEach(edge => {
+                        edge.visible = true;
+                    });
+                    return;
+                }
+
+                nodeObjects.forEach(obj => {
+                    const matches = obj.data.name.toLowerCase().includes(query);
+                    obj.mesh.material.opacity = matches ? 1 : 0.2;
+                });
+            });
+
+            // Try to auto-load metrics_tree.json
+            fetch('metrics_tree.json')
+                .then(response => response.json())
+                .then(data => {
+                    loadData(data);
+                })
+                .catch(() => {
+                    // File doesn't exist, show file input
+                });
+        });
+    </script>
+</body>
+</html>
