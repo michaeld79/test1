@@ -281,3 +281,118 @@ def list_files(ctx: click.Context) -> None:
     files = parse_diff(diff_text)
     for df in files:
         click.echo(df.new_path)
+
+
+# ──────────────────────────────────────────────
+#  watch command
+# ──────────────────────────────────────────────
+
+@main.command()
+@click.option("--interval", default=1.0, show_default=True, help="Poll interval in seconds.")
+@click.option("--file", "-f", "filepath", default=None, help="Filter to a specific file.")
+@click.pass_context
+def watch(ctx: click.Context, interval: float, filepath: Optional[str]) -> None:
+    """Watch for new comments in real-time.
+
+    Displays a live-updating table.  New comments that arrive after the
+    watch starts are highlighted in yellow.  Press Ctrl+C to exit.
+
+    \b
+    Example:
+        python -m revtui watch
+        python -m revtui watch --file src/main.py --interval 0.5
+    """
+    import time
+    from rich.console import Console
+    from rich.live import Live
+    from rich.padding import Padding
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    repo = ctx.obj["repo"]
+    store = _store(repo)
+
+    # Snapshot of IDs that existed before we started watching
+    store.load()
+    pre_existing_ids: set[str] = {c.id for c in store.all_comments}
+    seen_new_ids: set[str] = set()
+
+    console = Console()
+
+    def _build_table() -> Panel:
+        store.load()
+        comments = store.get_comments(file=filepath)
+        comments = sorted(comments, key=lambda c: c.timestamp)
+
+        table = Table(
+            show_header=True,
+            header_style="bold white",
+            expand=True,
+            show_edge=False,
+            padding=(0, 1),
+        )
+        table.add_column("Time", style="dim", width=10, no_wrap=True)
+        table.add_column("Author", width=20, no_wrap=True)
+        table.add_column("File", width=28, no_wrap=True)
+        table.add_column("Line", width=6, no_wrap=True)
+        table.add_column("St", width=4, no_wrap=True)
+        table.add_column("Message")
+
+        new_count = 0
+        for c in comments:
+            is_new = c.id not in pre_existing_ids
+            if is_new:
+                new_count += 1
+                seen_new_ids.add(c.id)
+
+            time_s = c.timestamp[11:19]
+
+            if c.author == "agent":
+                author = Text(f"🤖 {c.agent_name or 'agent'}", style="cyan")
+            else:
+                author = Text("👤 human", style="yellow")
+
+            status_t = Text(
+                "✓" if c.status == "resolved" else "●",
+                style="green" if c.status == "resolved" else "bright_white",
+            )
+            msg_text = Text(c.content[:70] + ("…" if len(c.content) > 70 else ""))
+
+            if is_new:
+                time_t = Text(f"★ {time_s}", style="bold yellow")
+                row_style = "bold"
+                msg_text.stylize("bold yellow")
+            else:
+                time_t = Text(time_s, style="dim")
+                row_style = ""
+
+            table.add_row(time_t, author, c.file, c.line_ref, status_t, msg_text, style=row_style)
+
+        total = len(comments)
+        open_cnt = sum(1 for c in comments if c.status == "open")
+        subtitle = (
+            f"[dim]{total} comment(s) · {open_cnt} open[/dim]"
+            f"  [bold yellow]{new_count} new[/bold yellow]"
+            if new_count
+            else f"[dim]{total} comment(s) · {open_cnt} open[/dim]"
+        )
+
+        filter_label = f" · [dim]{filepath}[/dim]" if filepath else ""
+        return Panel(
+            table,
+            title=f"[bold]revtui watch[/bold]{filter_label}  [dim](Ctrl+C to exit)[/dim]",
+            subtitle=subtitle,
+            border_style="blue",
+        )
+
+    with Live(_build_table(), console=console, refresh_per_second=4, screen=False) as live:
+        try:
+            while True:
+                time.sleep(interval)
+                live.update(_build_table())
+        except KeyboardInterrupt:
+            pass
+
+    console.print()
+    console.print(f"[dim]Watch stopped. {len(seen_new_ids)} new comment(s) received.[/dim]")

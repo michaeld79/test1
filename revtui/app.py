@@ -167,17 +167,38 @@ class DiffViewer(VerticalScroll):
             yield lbl
 
     def on_mount(self) -> None:
-        self.set_interval(2.5, self._auto_refresh)
+        self._known_ids: set[str] = {c.id for c in self.store.all_comments}
+        self.set_interval(1.5, self._auto_refresh)
         if self.diff_file.lines:
-            # Delay initial cursor set so labels are fully mounted
             self.call_after_refresh(self._set_initial_cursor)
 
     def _set_initial_cursor(self) -> None:
         self.cursor_idx = 0
 
     async def _auto_refresh(self) -> None:
-        """Reload comments from disk to catch CLI-added entries."""
+        """Reload comments from disk; notify on new arrivals."""
         self.store.load()
+        current_ids = {c.id for c in self.store.all_comments}
+        new_ids = current_ids - self._known_ids
+
+        if new_ids:
+            for c in self.store.all_comments:
+                if c.id in new_ids:
+                    if c.author == "agent":
+                        badge = f"🤖 {c.agent_name or 'agent'}"
+                        severity = "information"
+                    else:
+                        badge = "👤 human"
+                        severity = "information"
+                    preview = c.content[:50] + ("…" if len(c.content) > 50 else "")
+                    self.app.notify(
+                        f"{badge} · {c.file}:{c.line_ref}\n{preview}",
+                        title="New comment",
+                        severity=severity,
+                        timeout=6,
+                    )
+            self._known_ids = current_ids
+
         panel = self.app.query_one(CommentsPanel)
         current = (
             self.diff_file.lines[self.cursor_idx]
