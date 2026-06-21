@@ -29,7 +29,7 @@ Comments are stored in .rev/comments.json and shown inline in the diff TUI.
 ## Workflow (follow in order every time)
 
 ### 1. Discover changed files
-    python -m revtui files
+    revtui files
 
 ### 2. Read the diff for each file
     git diff HEAD -- <file>
@@ -40,12 +40,12 @@ Line-number rule:
   - lines (deletions)              →  use --old-line <old-file-lineno>
 
 ### 3. Check existing comments before adding new ones
-    python -m revtui list-comments --file <file> --open-only --json
+    revtui list-comments --file <file> --open-only --json
 
 Do not duplicate open comments. Do not reopen resolved ones.
 
 ### 4. Post your findings
-    python -m revtui add-comment \\
+    revtui add-comment \\
       --file <relative/path>   \\
       --line <new-file-lineno> \\
       --message "<comment>"    \\
@@ -61,8 +61,8 @@ Comment guidelines:
   - Explain *why* it matters in 1-3 sentences.
 
 ### 5. Resolve addressed comments (second-pass reviews only)
-    python -m revtui list-comments --open-only --json
-    python -m revtui resolve <comment-id>   # first 8 chars of UUID is enough
+    revtui list-comments --open-only --json
+    revtui resolve <comment-id>   # first 8 chars of UUID is enough
 
 ### 6. Print a summary
     Reviewed <N> file(s). Posted <M> comment(s). Resolved <K>.
@@ -70,28 +70,28 @@ Comment guidelines:
 
 ## CLI reference
 
-    python -m revtui files
+    revtui files
         List changed files (one per line).
 
-    python -m revtui status
+    revtui status
         Overview: changed files + comment counts.
 
-    python -m revtui add-comment \\
+    revtui add-comment \\
         --file FILE        relative path from repo root  (required)
         --line INT         new-file line number (additions / context)
         --old-line INT     old-file line number (deletions)
         --message TEXT     comment body  (required)
         --agent-name TEXT  your agent identifier
 
-    python -m revtui list-comments \\
+    revtui list-comments \\
         --file FILE        filter to one file
         --open-only        only unresolved comments
         --json             machine-readable output
 
-    python -m revtui resolve <id>
+    revtui resolve <id>
         Mark resolved by full UUID or 8-char prefix.
 
-    python -m revtui watch [--file FILE] [--interval FLOAT]
+    revtui watch [--file FILE] [--interval FLOAT]
         Stream new comments live (Ctrl-C to stop).
 
 ## Severity tags
@@ -105,15 +105,15 @@ Comment guidelines:
 
 ## Example session
 
-    python -m revtui files
+    revtui files
     git diff HEAD -- sample_agent_code.py
-    python -m revtui list-comments --file sample_agent_code.py --open-only --json
-    python -m revtui add-comment \\
+    revtui list-comments --file sample_agent_code.py --open-only --json
+    revtui add-comment \\
       --file sample_agent_code.py \\
       --line 7 \\
       --message "[bug] VIP discount is 0.5 (50%). Most tiers cap at 20-30%; confirm intentional." \\
       --agent-name "my-agent"
-    python -m revtui status
+    revtui status
 """
 
 
@@ -189,7 +189,7 @@ def comment_add(
 
     \b
     Example (agent):
-        python -m revtui comment add \\
+        revtui comment add \\
             --file src/main.py --line 42 \\
             --message "This logic is incorrect" \\
             --agent-name claude
@@ -415,8 +415,8 @@ def watch(ctx: click.Context, interval: float, filepath: Optional[str]) -> None:
 
     \b
     Example:
-        python -m revtui watch
-        python -m revtui watch --file src/main.py --interval 0.5
+        revtui watch
+        revtui watch --file src/main.py --interval 0.5
     """
     import time
     from rich.console import Console

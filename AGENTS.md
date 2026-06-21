@@ -14,7 +14,7 @@ Work through these steps in order every time you do a review.
 ### 1. Discover changed files
 
 ```bash
-python -m revtui files
+revtui files
 ```
 
 Returns one relative file path per line. Review all of them unless the task
@@ -37,7 +37,7 @@ to comment on.
 ### 3. Check existing comments first
 
 ```bash
-python -m revtui list-comments --file <file> --open-only --json
+revtui list-comments --file <file> --open-only --json
 ```
 
 Do not duplicate an open comment. Do not reopen a resolved one.
@@ -45,7 +45,7 @@ Do not duplicate an open comment. Do not reopen a resolved one.
 ### 4. Post comments
 
 ```bash
-python -m revtui add-comment \
+revtui add-comment \
   --file <relative/path> \
   --line <new-file-lineno> \
   --message "<comment>" \
@@ -64,10 +64,10 @@ python -m revtui add-comment \
 
 ```bash
 # List what's still open
-python -m revtui list-comments --open-only --json
+revtui list-comments --open-only --json
 
 # Resolve each comment the new code has fixed
-python -m revtui resolve <comment-id>   # first 8 chars of the UUID is enough
+revtui resolve <comment-id>   # first 8 chars of the UUID is enough
 ```
 
 ### 6. Output a summary
@@ -89,13 +89,13 @@ Say "No issues found." explicitly if there is nothing to flag.
 
 | Command | Purpose |
 |---------|----------|
-| `python -m revtui files` | List changed files |
-| `python -m revtui status` | Overview: files + comment counts |
-| `python -m revtui add-comment --file F --line N --message M --agent-name A` | Post a comment on a new-file line |
-| `python -m revtui add-comment --file F --old-line N --message M --agent-name A` | Post a comment on a deleted line |
-| `python -m revtui list-comments [--file F] [--open-only] [--json]` | Read comments |
-| `python -m revtui resolve <id>` | Mark a comment resolved |
-| `python -m revtui watch [--file F]` | Stream new comments live |
+| `revtui files` | List changed files |
+| `revtui status` | Overview: files + comment counts |
+| `revtui add-comment --file F --line N --message M --agent-name A` | Post a comment on a new-file line |
+| `revtui add-comment --file F --old-line N --message M --agent-name A` | Post a comment on a deleted line |
+| `revtui list-comments [--file F] [--open-only] [--json]` | Read comments |
+| `revtui resolve <id>` | Mark a comment resolved |
+| `revtui watch [--file F]` | Stream new comments live |
 
 ---
 
@@ -116,16 +116,16 @@ Say "No issues found." explicitly if there is nothing to flag.
 
 ```bash
 # Step 1 — what changed?
-python -m revtui files
+revtui files
 
 # Step 2 — read one file's diff
 git diff HEAD -- sample_agent_code.py
 
 # Step 3 — existing comments?
-python -m revtui list-comments --file sample_agent_code.py --open-only --json
+revtui list-comments --file sample_agent_code.py --open-only --json
 
 # Step 4 — post findings
-python -m revtui add-comment \
+revtui add-comment \
   --file sample_agent_code.py \
   --line 7 \
   --message "[bug] VIP discount is 0.5 (50%). Most tiers cap at 20–30%; confirm this is intentional." \
@@ -134,5 +134,5 @@ python -m revtui add-comment \
 # Step 5 — nothing to resolve on a first pass
 
 # Step 6 — summary
-python -m revtui status
+revtui status
 ```

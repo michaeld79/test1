@@ -15,7 +15,7 @@ on reading the actual diff output rather than guessing.
 ## Step 1 — Discover what changed
 
 ```bash
-python -m revtui files
+revtui files
 ```
 
 Returns one file path per line. Work through every file unless the user asked
@@ -44,7 +44,7 @@ old-file numbers).
 ## Step 3 — Read existing comments before adding new ones
 
 ```bash
-python -m revtui list-comments --file <file> --json
+revtui list-comments --file <file> --json
 ```
 
 Avoid duplicating comments that are already present. If an existing open comment
@@ -56,7 +56,7 @@ not reopen it.
 ## Step 4 — Post your comments
 
 ```bash
-python -m revtui add-comment \
+revtui add-comment \
   --file <relative/path/to/file> \
   --line <new-file-lineno> \
   --message "<your comment>" \
@@ -91,13 +91,13 @@ If you are reviewing a second pass after the human has made changes, check
 which comments are now addressed:
 
 ```bash
-python -m revtui list-comments --open-only --json
+revtui list-comments --open-only --json
 ```
 
 For each comment that the new code has resolved:
 
 ```bash
-python -m revtui resolve <comment-id>
+revtui resolve <comment-id>
 ```
 
 `<comment-id>` can be the first 8 characters of the full UUID shown in
@@ -124,28 +124,28 @@ If there is nothing to comment on, say so explicitly: "No issues found."
 ## Full CLI reference
 
 ```
-python -m revtui files
+revtui files
     List files changed in the current diff (one per line).
 
-python -m revtui status
+revtui status
     Summary: changed files, open and resolved comment counts.
 
-python -m revtui add-comment \
+revtui add-comment \
     --file FILE        Relative path from repo root (required)
     --line INT         New-file line number (additions / context)
     --old-line INT     Old-file line number (deletions) — use instead of --line
     --message TEXT     Comment body (required)
     --agent-name TEXT  Your agent identifier (e.g. "gpt-reviewer", "claude-reviewer")
 
-python -m revtui list-comments \
+revtui list-comments \
     --file FILE        Filter to one file
     --open-only        Only open (unresolved) comments
     --json             Machine-readable JSON output
 
-python -m revtui resolve COMMENT_ID
+revtui resolve COMMENT_ID
     Mark a comment resolved by its full UUID or 8-char prefix.
 
-python -m revtui watch \
+revtui watch \
     --file FILE        Filter to one file
     --interval FLOAT   Poll interval in seconds (default 1.0)
     Stream new comments as they arrive; Ctrl-C to stop.
@@ -157,28 +157,28 @@ python -m revtui watch \
 
 ```bash
 # 1. What changed?
-python -m revtui files
+revtui files
 # → sample_agent_code.py
 
 # 2. Read the diff
 git diff HEAD -- sample_agent_code.py
 
 # 3. Any existing comments?
-python -m revtui list-comments --file sample_agent_code.py --json
+revtui list-comments --file sample_agent_code.py --json
 
 # 4. Post findings
-python -m revtui add-comment \
+revtui add-comment \
   --file sample_agent_code.py \
   --line 7 \
   --message "[bug] VIP discount is 0.5 (50%). Confirm this is intentional — most tiers cap at 20-30%." \
   --agent-name "claude-reviewer"
 
-python -m revtui add-comment \
+revtui add-comment \
   --file sample_agent_code.py \
   --line 12 \
   --message "rounding here prevents floating-point drift in downstream totals — good practice." \
   --agent-name "claude-reviewer"
 
 # 5. Summary
-python -m revtui status
+revtui status
 ```
