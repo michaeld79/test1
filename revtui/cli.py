@@ -17,11 +17,127 @@ def _store(repo: str) -> CommentStore:
 
 
 # ──────────────────────────────────────────────
+#  Embedded agent skill
+# ──────────────────────────────────────────────
+
+_SKILL = """\
+# revtui — agent code review instructions
+
+Use the revtui CLI to post inline review comments on the current git diff.
+Comments are stored in .rev/comments.json and shown inline in the diff TUI.
+
+## Workflow (follow in order every time)
+
+### 1. Discover changed files
+    python -m revtui files
+
+### 2. Read the diff for each file
+    git diff HEAD -- <file>
+
+Study the hunk headers (@@ -OLD +NEW @@) to find exact line numbers.
+Line-number rule:
+  + lines (additions) and context  →  use --line <new-file-lineno>
+  - lines (deletions)              →  use --old-line <old-file-lineno>
+
+### 3. Check existing comments before adding new ones
+    python -m revtui list-comments --file <file> --open-only --json
+
+Do not duplicate open comments. Do not reopen resolved ones.
+
+### 4. Post your findings
+    python -m revtui add-comment \\
+      --file <relative/path>   \\
+      --line <new-file-lineno> \\
+      --message "<comment>"    \\
+      --agent-name "<your-id>"
+
+Use --old-line instead of --line when commenting on a deleted line.
+
+Comment guidelines:
+  - Start with a severity tag: [bug] [security] [perf] [style] [question]
+    Omit the tag for general suggestions.
+  - One issue per comment. Never bundle multiple concerns.
+  - Name the exact variable, function, or pattern you mean.
+  - Explain *why* it matters in 1-3 sentences.
+
+### 5. Resolve addressed comments (second-pass reviews only)
+    python -m revtui list-comments --open-only --json
+    python -m revtui resolve <comment-id>   # first 8 chars of UUID is enough
+
+### 6. Print a summary
+    Reviewed <N> file(s). Posted <M> comment(s). Resolved <K>.
+    Say "No issues found." explicitly if there is nothing to flag.
+
+## CLI reference
+
+    python -m revtui files
+        List changed files (one per line).
+
+    python -m revtui status
+        Overview: changed files + comment counts.
+
+    python -m revtui add-comment \\
+        --file FILE        relative path from repo root  (required)
+        --line INT         new-file line number (additions / context)
+        --old-line INT     old-file line number (deletions)
+        --message TEXT     comment body  (required)
+        --agent-name TEXT  your agent identifier
+
+    python -m revtui list-comments \\
+        --file FILE        filter to one file
+        --open-only        only unresolved comments
+        --json             machine-readable output
+
+    python -m revtui resolve <id>
+        Mark resolved by full UUID or 8-char prefix.
+
+    python -m revtui watch [--file FILE] [--interval FLOAT]
+        Stream new comments live (Ctrl-C to stop).
+
+## Severity tags
+
+    [bug]       Wrong output, crash risk, incorrect logic
+    [security]  Auth bypass, injection, exposed secrets
+    [perf]      Measurable or obvious performance problem
+    [style]     Naming, formatting, readability
+    [question]  Genuine uncertainty — ask before assuming it's wrong
+    (none)      General suggestion or improvement
+
+## Example session
+
+    python -m revtui files
+    git diff HEAD -- sample_agent_code.py
+    python -m revtui list-comments --file sample_agent_code.py --open-only --json
+    python -m revtui add-comment \\
+      --file sample_agent_code.py \\
+      --line 7 \\
+      --message "[bug] VIP discount is 0.5 (50%). Most tiers cap at 20-30%; confirm intentional." \\
+      --agent-name "my-agent"
+    python -m revtui status
+"""
+
+
+def _print_skill(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(_SKILL)
+    ctx.exit()
+
+
+# ──────────────────────────────────────────────
 #  Root command
 # ──────────────────────────────────────────────
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--repo", default=".", show_default=True, help="Path to git repository.")
+@click.option(
+    "--skill",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_print_skill,
+    help="Print agent instructions for using this tool and exit.",
+)
 @click.pass_context
 def main(ctx: click.Context, repo: str) -> None:
     """Code review TUI for reviewing agent-written code.
