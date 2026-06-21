@@ -3,6 +3,8 @@
 A terminal UI for reviewing agent-written code. View the git diff, leave inline
 comments, and let your coding agent read them back via CLI.
 
+![revtui screenshot](docs/screenshot.png)
+
 ## What it does
 
 - **Colored diff view** with file tree sidebar (toggle with `s`)
