@@ -1,26 +1,28 @@
 """Main Textual TUI for code review."""
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from rich.markup import escape
 from rich.style import Style
 from rich.text import Text
-from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, ContentSwitcher, Footer, Header, Input, Label, Static
+from textual.widgets import (
+    Button, ContentSwitcher, Footer, Header, Input, Label, Static, Tree,
+)
 
 from .comment_store import Comment, CommentStore
 from .diff_parser import DiffFile, DiffLine, get_git_diff, parse_diff
 
 # ──────────────────────────────────────────────
-#  Rendering helpers
+#  Diff line rendering
 # ──────────────────────────────────────────────
 
 _STYLES = {
@@ -53,6 +55,10 @@ def make_line_text(line: DiffLine, selected: bool = False) -> Text:
     return t
 
 
+# ──────────────────────────────────────────────
+#  Comment panel rendering
+# ──────────────────────────────────────────────
+
 def make_comment_text(store: CommentStore, diff_file: DiffFile, current_line: Optional[DiffLine]) -> Text:
     t = Text()
     comments = store.get_comments(file=diff_file.new_path)
@@ -65,7 +71,6 @@ def make_comment_text(store: CommentStore, diff_file: DiffFile, current_line: Op
         t.append(" on a diff line to add one.", style="dim")
         return t
 
-    # Identify which comments match the current cursor line
     on_line: set[str] = set()
     if current_line:
         for c in comments:
@@ -86,8 +91,7 @@ def make_comment_text(store: CommentStore, diff_file: DiffFile, current_line: Op
     t.append(f"{resolved_cnt} resolved\n\n", style="dim")
 
     for c in sorted(comments, key=lambda x: (x.new_lineno or 0, x.old_lineno or 0, x.timestamp)):
-        highlighted = c.id in on_line
-        _append_comment(t, c, highlighted)
+        _append_comment(t, c, c.id in on_line)
         t.append("\n")
 
     return t
@@ -124,21 +128,128 @@ def _append_comment(t: Text, c: Comment, highlighted: bool) -> None:
 
 
 # ──────────────────────────────────────────────
+#  FileTree sidebar
+# ──────────────────────────────────────────────
+
+class FileTree(Tree):
+    """Left sidebar: tree of changed files with diff stats and comment counts."""
+
+    can_focus = True
+
+    class FileSelected(Message):
+        def __init__(self, file_idx: int) -> None:
+            super().__init__()
+            self.file_idx = file_idx
+
+    def __init__(self, diff_files: List[DiffFile], store: CommentStore, **kwargs: Any) -> None:
+        super().__init__("Changed Files", **kwargs)
+        self.diff_files = diff_files
+        self.store = store
+        self._file_nodes: Dict[int, Any] = {}  # file_idx → TreeNode
+        # Guard counter: suppress NodeHighlighted events caused by select_idx()
+        self._move_guard = 0
+        self.root.expand()
+
+    def on_mount(self) -> None:
+        self._rebuild()
+        if self._file_nodes:
+            self.call_after_refresh(lambda: self.move_cursor(self._file_nodes[0]))
+
+    # ── Building the tree ───────────────────────
+
+    def _rebuild(self) -> None:
+        self.root.remove_children()
+        self._file_nodes = {}
+
+        groups: Dict[str, List[tuple]] = defaultdict(list)
+        for i, df in enumerate(self.diff_files):
+            p = Path(df.new_path)
+            parent = str(p.parent) if len(p.parts) > 1 else ""
+            groups[parent].append((i, df))
+
+        for parent in sorted(groups.keys()):
+            if parent:
+                dir_node = self.root.add(
+                    Text(f"{parent}/", style="bold #888888"),
+                    expand=True,
+                )
+            else:
+                dir_node = self.root
+
+            for idx, df in groups[parent]:
+                node = dir_node.add_leaf(self._file_label(idx, df), data=idx)
+                self._file_nodes[idx] = node
+
+    def _file_label(self, idx: int, df: DiffFile) -> Text:
+        """Rich label: filename  +adds  -dels  H:n  A:n"""
+        comments = self.store.get_comments(file=df.new_path)
+        human_open  = sum(1 for c in comments if c.author == "human"  and c.status == "open")
+        agent_open  = sum(1 for c in comments if c.author == "agent"  and c.status == "open")
+
+        t = Text(no_wrap=True, overflow="ellipsis")
+        t.append(Path(df.new_path).name, style="white")
+
+        if df.additions or df.deletions:
+            t.append("  ")
+        if df.additions:
+            t.append(f"+{df.additions}", style="green")
+        if df.deletions:
+            t.append(" " if df.additions else "")
+            t.append(f"-{df.deletions}", style="red")
+
+        if human_open:
+            t.append(f"  H:{human_open}", style="bold yellow")
+        if agent_open:
+            t.append(f"  A:{agent_open}", style="bold cyan")
+
+        return t
+
+    # ── Public API ──────────────────────────────
+
+    def refresh_stats(self) -> None:
+        """Refresh line counts and comment badges without rebuilding the tree."""
+        for idx, node in self._file_nodes.items():
+            node.label = self._file_label(idx, self.diff_files[idx])
+
+    def select_idx(self, idx: int) -> None:
+        """Move tree cursor to the node for file index `idx` (no FileSelected event)."""
+        node = self._file_nodes.get(idx)
+        if node:
+            self._move_guard += 1
+            self.move_cursor(node)
+
+    # ── Event handlers ──────────────────────────
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Fires on every cursor movement — use to switch files as you arrow through."""
+        if self._move_guard > 0:
+            self._move_guard -= 1
+            return
+        if event.node.data is not None:
+            self.post_message(self.FileSelected(event.node.data))
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        """Enter key — also fires FileSelected and transfers focus to diff view."""
+        if event.node.data is not None:
+            self.post_message(self.FileSelected(event.node.data))
+
+
+# ──────────────────────────────────────────────
 #  DiffViewer widget
 # ──────────────────────────────────────────────
 
 class DiffViewer(VerticalScroll):
-    """Scrollable diff viewer with keyboard-driven line selection."""
+    """Scrollable, cursor-driven diff view."""
 
     can_focus = True
     BINDINGS = [
         Binding("j,down", "move_down", "↓", show=False),
-        Binding("k,up", "move_up", "↑", show=False),
+        Binding("k,up",   "move_up",   "↑", show=False),
         Binding("ctrl+d", "page_down", "PgDn", show=False),
-        Binding("ctrl+u", "page_up", "PgUp", show=False),
-        Binding("g", "go_top", "Top", show=False),
+        Binding("ctrl+u", "page_up",   "PgUp", show=False),
+        Binding("g", "go_top",    "Top",    show=False),
         Binding("G", "go_bottom", "Bottom", show=False),
-        Binding("c", "add_comment", "Comment"),
+        Binding("c", "add_comment",     "Comment"),
         Binding("r", "resolve_comment", "Resolve"),
     ]
 
@@ -156,6 +267,7 @@ class DiffViewer(VerticalScroll):
         self.diff_file = diff_file
         self.store = store
         self._labels: List[Label] = []
+        self._known_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         if not self.diff_file.lines:
@@ -167,7 +279,7 @@ class DiffViewer(VerticalScroll):
             yield lbl
 
     def on_mount(self) -> None:
-        self._known_ids: set[str] = {c.id for c in self.store.all_comments}
+        self._known_ids = {c.id for c in self.store.all_comments}
         self.set_interval(1.5, self._auto_refresh)
         if self.diff_file.lines:
             self.call_after_refresh(self._set_initial_cursor)
@@ -176,7 +288,7 @@ class DiffViewer(VerticalScroll):
         self.cursor_idx = 0
 
     async def _auto_refresh(self) -> None:
-        """Reload comments from disk; notify on new arrivals."""
+        """Reload comments; notify on new arrivals; refresh tree stats."""
         self.store.load()
         current_ids = {c.id for c in self.store.all_comments}
         new_ids = current_ids - self._known_ids
@@ -184,20 +296,20 @@ class DiffViewer(VerticalScroll):
         if new_ids:
             for c in self.store.all_comments:
                 if c.id in new_ids:
-                    if c.author == "agent":
-                        badge = f"🤖 {c.agent_name or 'agent'}"
-                        severity = "information"
-                    else:
-                        badge = "👤 human"
-                        severity = "information"
+                    badge = f"🤖 {c.agent_name or 'agent'}" if c.author == "agent" else "👤 human"
                     preview = c.content[:50] + ("…" if len(c.content) > 50 else "")
                     self.app.notify(
                         f"{badge} · {c.file}:{c.line_ref}\n{preview}",
                         title="New comment",
-                        severity=severity,
+                        severity="information",
                         timeout=6,
                     )
             self._known_ids = current_ids
+            # Refresh sidebar badges
+            try:
+                self.app.query_one(FileTree).refresh_stats()
+            except Exception:
+                pass
 
         panel = self.app.query_one(CommentsPanel)
         current = (
@@ -210,9 +322,8 @@ class DiffViewer(VerticalScroll):
     def watch_cursor_idx(self, old: int, new: int) -> None:
         n = len(self.diff_file.lines)
         labels = self._labels
-
         if len(labels) != n:
-            return  # Not yet composed
+            return
 
         if 0 <= old < n:
             labels[old].update(make_line_text(self.diff_file.lines[old], selected=False))
@@ -223,7 +334,7 @@ class DiffViewer(VerticalScroll):
         line = self.diff_file.lines[new] if 0 <= new < n else None
         self.post_message(self.LineChanged(new, line, self.diff_file))
 
-    # ── Actions ─────────────────────────────────
+    # ── Navigation actions ───────────────────────
 
     def action_move_down(self) -> None:
         self.cursor_idx = min(self.cursor_idx + 1, len(self.diff_file.lines) - 1)
@@ -244,6 +355,8 @@ class DiffViewer(VerticalScroll):
         n = len(self.diff_file.lines)
         if n:
             self.cursor_idx = n - 1
+
+    # ── Comment actions ──────────────────────────
 
     def action_add_comment(self) -> None:
         n = len(self.diff_file.lines)
@@ -266,7 +379,11 @@ class DiffViewer(VerticalScroll):
             ):
                 self.store.resolve(c.id)
                 self.app.query_one(CommentsPanel).update_comments(self.diff_file, line)
-                self.app.notify(f"Resolved comment [{c.short_id}]", severity="information")
+                try:
+                    self.app.query_one(FileTree).refresh_stats()
+                except Exception:
+                    pass
+                self.app.notify(f"Resolved [{c.short_id}]", severity="information")
                 return
         self.app.notify("No open comment on this line.", severity="warning")
 
@@ -274,27 +391,27 @@ class DiffViewer(VerticalScroll):
         n = len(self.diff_file.lines)
         current = self.diff_file.lines[self.cursor_idx] if 0 <= self.cursor_idx < n else None
         self.app.query_one(CommentsPanel).update_comments(self.diff_file, current)
+        try:
+            self.app.query_one(FileTree).refresh_stats()
+        except Exception:
+            pass
 
 
 # ──────────────────────────────────────────────
-#  CommentsPanel widget
+#  CommentsPanel
 # ──────────────────────────────────────────────
 
 class CommentsPanel(VerticalScroll):
-    """Right panel: displays comments for the current diff file / line."""
+    """Right panel: comments for the current diff file / cursor line."""
 
     def __init__(self, store: CommentStore, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
-        self._diff_file: Optional[DiffFile] = None
-        self._current_line: Optional[DiffLine] = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="comments-text")
 
     def update_comments(self, diff_file: Optional[DiffFile], line: Optional[DiffLine]) -> None:
-        self._diff_file = diff_file
-        self._current_line = line
         display = self.query_one("#comments-text", Static)
         if diff_file is None:
             display.update(Text("Select a file to see comments.", style="dim"))
@@ -307,7 +424,7 @@ class CommentsPanel(VerticalScroll):
 # ──────────────────────────────────────────────
 
 class AddCommentScreen(ModalScreen[None]):
-    """Modal for adding a review comment."""
+    """Modal for writing a review comment."""
 
     BINDINGS = [Binding("escape", "dismiss", "Cancel")]
 
@@ -319,13 +436,11 @@ class AddCommentScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         line = self.diff_line
-        if line.new_lineno is not None:
-            loc = f"L{line.new_lineno}"
-        elif line.old_lineno is not None:
-            loc = f"-L{line.old_lineno}"
-        else:
-            loc = "header"
-
+        loc = (
+            f"L{line.new_lineno}" if line.new_lineno is not None
+            else f"-L{line.old_lineno}" if line.old_lineno is not None
+            else "header"
+        )
         with Vertical(id="add-comment-dialog"):
             yield Static(
                 f"[bold]Add Comment[/bold]  [dim]{escape(self.diff_file.new_path)} {loc}[/dim]",
@@ -377,26 +492,24 @@ class AddCommentScreen(ModalScreen[None]):
 
 _HELP = """\
 [bold]Navigation[/bold]
-  [yellow]j / ↓[/yellow]       Move cursor down
-  [yellow]k / ↑[/yellow]       Move cursor up
-  [yellow]Ctrl+D[/yellow]      Page down (20 lines)
-  [yellow]Ctrl+U[/yellow]      Page up (20 lines)
-  [yellow]g[/yellow]           Jump to top
-  [yellow]G[/yellow]           Jump to bottom
-  [yellow][ / ←[/yellow]       Previous file
-  [yellow]] / →[/yellow]       Next file
+  [yellow]j / ↓[/yellow]       Move diff cursor down
+  [yellow]k / ↑[/yellow]       Move diff cursor up
+  [yellow]Ctrl+D / Ctrl+U[/yellow]  Page down / up
+  [yellow]g / G[/yellow]       Jump to top / bottom
+  [yellow]Tab[/yellow]         Switch focus: tree ↔ diff ↔ comments
+  [yellow]↑ / ↓ (tree)[/yellow]  Browse files — diff preview follows cursor
+  [yellow]Enter (tree)[/yellow]    Select file and focus diff
 
 [bold]Comments[/bold]
   [yellow]c[/yellow]           Add comment on cursor line
   [yellow]r[/yellow]           Resolve open comment on cursor line
 
-[bold]Agent CLI[/bold]  (from terminal, while TUI is open or not)
+[bold]Agent CLI[/bold]
   [cyan]python -m revtui add-comment --file FILE --line LINE \\
           --message "MSG" --agent-name NAME[/cyan]
-
-  [cyan]python -m revtui list-comments [--file FILE] [--json][/cyan]
-  [cyan]python -m revtui resolve COMMENT_ID[/cyan]
-  [cyan]python -m revtui status[/cyan]
+  [cyan]python -m revtui watch[/cyan]          Live comment feed
+  [cyan]python -m revtui list-comments[/cyan]  All comments (JSON: --json)
+  [cyan]python -m revtui status[/cyan]         Summary
 
 [bold]Other[/bold]
   [yellow]?[/yellow]           Toggle this help
@@ -407,45 +520,21 @@ _HELP = """\
 class HelpScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss", "Close"),
-        Binding("q", "dismiss", "Close"),
-        Binding("?", "dismiss", "Close"),
+        Binding("q",      "dismiss", "Close"),
+        Binding("question_mark", "dismiss", "Close"),
     ]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-dialog"):
-            yield Static("[bold reverse]  revtui — Code Review TUI  [/bold reverse]", id="help-title")
+            yield Static(
+                "[bold reverse]  revtui — Code Review TUI  [/bold reverse]",
+                id="help-title",
+            )
             yield Static(_HELP, id="help-body")
             yield Button("Close  [dim](Esc)[/dim]", id="btn-close")
 
     def on_button_pressed(self, _: Button.Pressed) -> None:
         self.dismiss()
-
-
-# ──────────────────────────────────────────────
-#  File selector bar
-# ──────────────────────────────────────────────
-
-class FileSelectorBar(Static):
-    """Top bar showing current file and navigation hints."""
-
-    def __init__(self, diff_files: List[DiffFile], **kwargs: Any) -> None:
-        super().__init__("", **kwargs)
-        self.diff_files = diff_files
-
-    def update_for(self, idx: int, comment_count: int) -> None:
-        n = len(self.diff_files)
-        if n == 0:
-            self.update("[dim]No diff found[/dim]")
-            return
-        f = self.diff_files[idx]
-        add = f"[green]+{f.additions}[/green]"
-        rem = f"[red]-{f.deletions}[/red]"
-        self.update(
-            f"[dim][[/dim] [yellow]{idx+1}[/yellow][dim]/{n}[/dim] [dim]][/dim]  "
-            f"[bold]{escape(f.display_path)}[/bold]  "
-            f"{add} {rem}  "
-            f"[dim]{comment_count} comment(s)   ← [ / → ][/dim]"
-        )
 
 
 # ──────────────────────────────────────────────
@@ -467,18 +556,34 @@ class ReviewApp(App[None]):
         background: #21252b;
         color: #6b7280;
     }
-    #file-bar {
-        background: #282c34;
-        color: #abb2bf;
-        height: 1;
-        padding: 0 1;
-        border-bottom: solid #3e4451;
-    }
     #main-body {
         height: 1fr;
     }
+
+    /* ── File tree sidebar ── */
+    FileTree {
+        width: 28;
+        background: #1a1d24;
+        border-right: solid #3e4451;
+        scrollbar-color: #3e4451;
+        padding: 0;
+    }
+    FileTree > .tree--guides {
+        color: #3e4451;
+    }
+    FileTree > .tree--guides-selected {
+        color: #528bff;
+    }
+    FileTree > .tree--cursor {
+        background: #2c313a;
+    }
+    FileTree:focus > .tree--cursor {
+        background: #2c313a;
+    }
+
+    /* ── Diff viewer ── */
     ContentSwitcher {
-        width: 3fr;
+        width: 1fr;
         border-right: solid #3e4451;
     }
     DiffViewer {
@@ -489,8 +594,10 @@ class ReviewApp(App[None]):
     Label {
         padding: 0 0;
     }
+
+    /* ── Comments panel ── */
     #comments-panel {
-        width: 1fr;
+        width: 30;
         background: #21252b;
         padding: 0 1;
         scrollbar-color: #3e4451;
@@ -498,6 +605,7 @@ class ReviewApp(App[None]):
     #comments-text {
         width: 100%;
     }
+
     /* ── Add Comment modal ── */
     AddCommentScreen {
         align: center middle;
@@ -527,6 +635,7 @@ class ReviewApp(App[None]):
     #dialog-btns Button {
         margin-left: 1;
     }
+
     /* ── Help modal ── */
     HelpScreen {
         align: center middle;
@@ -534,7 +643,7 @@ class ReviewApp(App[None]):
     #help-dialog {
         width: 72;
         height: auto;
-        max-height: 35;
+        max-height: 38;
         background: #282c34;
         border: thick #528bff;
         padding: 1 2;
@@ -549,10 +658,9 @@ class ReviewApp(App[None]):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("left,bracketleft", "prev_file", "Prev file"),
-        Binding("right,bracketright", "next_file", "Next file"),
-        Binding("question_mark", "help", "Help"),
+        Binding("q",             "quit",      "Quit"),
+        Binding("question_mark", "help",      "Help"),
+        Binding("tab",           "focus_next","Focus next", show=False),
     ]
 
     file_idx: reactive[int] = reactive(0, init=False)
@@ -566,8 +674,8 @@ class ReviewApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield FileSelectorBar(self.diff_files, id="file-bar")
         with Horizontal(id="main-body"):
+            yield FileTree(self.diff_files, self.store, id="file-tree")
             if self.diff_files:
                 with ContentSwitcher(id="diff-switcher", initial="file-0"):
                     for i, df in enumerate(self.diff_files):
@@ -576,7 +684,7 @@ class ReviewApp(App[None]):
                 yield Static(
                     f"\n[bold yellow]No diff found.[/bold yellow]\n\n"
                     f"[dim]{self.diff_desc}[/dim]\n\n"
-                    "[dim]Run revtui from a git repository that has uncommitted changes.[/dim]",
+                    "[dim]Run revtui from a git repository with uncommitted changes.[/dim]",
                     id="no-diff-msg",
                 )
             yield CommentsPanel(self.store, id="comments-panel")
@@ -587,47 +695,30 @@ class ReviewApp(App[None]):
         self.sub_title = self.diff_desc
         if self.diff_files:
             self.file_idx = 0
-            self._sync_file_bar()
-            # Focus the first viewer
-            self.call_after_refresh(lambda: self.query_one("#file-0", DiffViewer).focus())
-        else:
-            self.query_one(FileSelectorBar).update_for(0, 0)
+            # Focus the tree first so the user can immediately browse files
+            self.call_after_refresh(lambda: self.query_one(FileTree).focus())
 
     def watch_file_idx(self, _old: int, new: int) -> None:
         if not self.diff_files:
             return
-        switcher = self.query_one("#diff-switcher", ContentSwitcher)
-        switcher.current = f"file-{new}"
-        self._sync_file_bar()
-        panel = self.query_one(CommentsPanel)
-        panel.update_comments(self.diff_files[new], None)
-        # Focus the newly visible viewer
+        # Switch the diff pane
+        self.query_one("#diff-switcher", ContentSwitcher).current = f"file-{new}"
+        # Update the right comment panel
+        self.query_one(CommentsPanel).update_comments(self.diff_files[new], None)
+        # Sync tree cursor without triggering FileSelected again
+        self.query_one(FileTree).select_idx(new)
+        # Focus the diff viewer
         self.call_after_refresh(lambda: self.query_one(f"#file-{new}", DiffViewer).focus())
 
-    def _sync_file_bar(self) -> None:
-        if not self.diff_files:
-            return
-        idx = self.file_idx
-        df = self.diff_files[idx]
-        cnt = len(self.store.get_comments(file=df.new_path))
-        self.query_one(FileSelectorBar).update_for(idx, cnt)
+    # ── Message handlers ─────────────────────────
 
-    # ── File switching ───────────────────────────
+    def on_file_tree_file_selected(self, event: FileTree.FileSelected) -> None:
+        self.file_idx = event.file_idx
 
-    def action_prev_file(self) -> None:
-        if self.diff_files:
-            self.file_idx = max(0, self.file_idx - 1)
+    def on_diff_viewer_line_changed(self, event: DiffViewer.LineChanged) -> None:
+        self.query_one(CommentsPanel).update_comments(event.diff_file, event.line)
 
-    def action_next_file(self) -> None:
-        if self.diff_files:
-            self.file_idx = min(len(self.diff_files) - 1, self.file_idx + 1)
+    # ── Actions ──────────────────────────────────
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
-
-    # ── Message handlers ────────────────────────
-
-    def on_diff_viewer_line_changed(self, event: DiffViewer.LineChanged) -> None:
-        panel = self.query_one(CommentsPanel)
-        panel.update_comments(event.diff_file, event.line)
-        self._sync_file_bar()
