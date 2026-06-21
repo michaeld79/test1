@@ -14,8 +14,11 @@ comments, and let your coding agent read them back via CLI.
 ## Install
 
 ```bash
-# From GitHub (recommended)
+# pipx (recommended)
 pipx install git+https://github.com/michaeld79/revtui.git
+
+# uv tool
+uv tool install git+https://github.com/michaeld79/revtui.git
 
 # Or locally from the repo
 pip install .
