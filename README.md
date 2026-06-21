@@ -15,7 +15,7 @@ comments, and let your coding agent read them back via CLI.
 
 ```bash
 # From GitHub (recommended)
-pipx install git+https://github.com/michaeld79/test1.git
+pipx install git+https://github.com/michaeld79/revtui.git
 
 # Or locally from the repo
 pip install .
@@ -127,8 +127,8 @@ AGENTS.md          Agent instructions (read by Codex automatically)
 ## Development
 
 ```bash
-git clone https://github.com/michaeld79/test1.git
-cd test1
+git clone https://github.com/michaeld79/revtui.git
+cd revtui
 pip install -e .
 revtui --repo .
 ```
