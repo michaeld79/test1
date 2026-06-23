@@ -224,7 +224,6 @@ class DiffViewer(VerticalScroll):
         self.diff_file = diff_file
         self.store = store
         self._labels: List[Label] = []
-        self._known_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         if not self.diff_file.lines:
@@ -236,38 +235,12 @@ class DiffViewer(VerticalScroll):
             yield lbl
 
     def on_mount(self) -> None:
-        self._known_ids = {c.id for c in self.store.all_comments}
-        self.set_interval(1.5, self._auto_refresh)
         if self.diff_file.lines:
             self.call_after_refresh(self._set_initial_cursor)
             self._refresh_inline_comments()
 
     def _set_initial_cursor(self) -> None:
         self.cursor_idx = 0
-
-    async def _auto_refresh(self) -> None:
-        """Reload comments; notify on new arrivals; refresh inline display and tree stats."""
-        self.store.load()
-        current_ids = {c.id for c in self.store.all_comments}
-        new_ids = current_ids - self._known_ids
-
-        if new_ids:
-            for c in self.store.all_comments:
-                if c.id in new_ids:
-                    badge = f"🤖 {c.agent_name or 'agent'}" if c.author == "agent" else "👤 human"
-                    preview = c.content[:50] + ("…" if len(c.content) > 50 else "")
-                    self.app.notify(
-                        f"{badge} · {c.file}:{c.line_ref}\n{preview}",
-                        title="New comment",
-                        severity="information",
-                        timeout=6,
-                    )
-            self._known_ids = current_ids
-            try:
-                self.app.query_one(FileTree).refresh_stats()
-            except Exception:
-                pass
-            self._refresh_inline_comments()
 
     # ── Inline comment helpers ───────────────────────────────
 
@@ -656,9 +629,39 @@ class ReviewApp(App[None]):
     def on_mount(self) -> None:
         self.title = "revtui"
         self.sub_title = self.diff_desc
+        self._known_ids = {c.id for c in self.store.all_comments}
+        self.set_interval(1.5, self._poll_comments)
         if self.diff_files:
             self.file_idx = 0
             self.call_after_refresh(lambda: self.query_one(FileTree).focus())
+
+    def _poll_comments(self) -> None:
+        """Reload comments; notify once per new arrival; refresh tree stats and current viewer."""
+        self.store.load()
+        current = {c.id for c in self.store.all_comments}
+        new_ids = current - self._known_ids
+
+        if new_ids:
+            for c in self.store.all_comments:
+                if c.id in new_ids:
+                    badge = f"🤖 {c.agent_name or 'agent'}" if c.author == "agent" else "👤 human"
+                    preview = c.content[:50] + ("…" if len(c.content) > 50 else "")
+                    self.notify(
+                        f"{badge} · {c.file}:{c.line_ref}\n{preview}",
+                        title="New comment",
+                        severity="information",
+                        timeout=6,
+                    )
+            self._known_ids = current
+            try:
+                self.query_one(FileTree).refresh_stats()
+            except Exception:
+                pass
+            if self.diff_files:
+                try:
+                    self.query_one(f"#file-{self.file_idx}", DiffViewer)._refresh_inline_comments()
+                except Exception:
+                    pass
 
     def watch_file_idx(self, _old: int, new: int) -> None:
         if not self.diff_files:
