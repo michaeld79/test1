@@ -257,7 +257,7 @@ class DiffViewer(VerticalScroll):
         Binding("G", "go_bottom", "Bottom", show=False),
         Binding("c", "add_comment",     "Comment"),
         Binding("r", "resolve_comment", "Resolve"),
-        Binding("d", "delete_comment",  "Delete", show=False),
+        Binding("d", "delete_comment",  "Delete"),
         Binding("n", "next_comment",      "Next comment", show=False),
         Binding("N", "prev_comment",      "Prev comment", show=False),
         Binding("]", "next_unresolved",   "Next unresolved", show=False),
