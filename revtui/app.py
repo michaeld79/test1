@@ -215,6 +215,11 @@ class DiffViewer(VerticalScroll):
         Binding("G", "go_bottom", "Bottom", show=False),
         Binding("c", "add_comment",     "Comment"),
         Binding("r", "resolve_comment", "Resolve"),
+        Binding("d", "delete_comment",  "Delete", show=False),
+        Binding("n", "next_comment",      "Next comment", show=False),
+        Binding("N", "prev_comment",      "Prev comment", show=False),
+        Binding("]", "next_unresolved",   "Next unresolved", show=False),
+        Binding("[", "prev_unresolved",   "Prev unresolved", show=False),
     ]
 
     cursor_idx: reactive[int] = reactive(-1, init=False)
@@ -225,6 +230,7 @@ class DiffViewer(VerticalScroll):
         self.store = store
         self._labels: List[Label] = []
         self._known_ids: set[str] = set()
+        self._armed_delete_idx: Optional[int] = None
 
     def compose(self) -> ComposeResult:
         if not self.diff_file.lines:
@@ -308,6 +314,8 @@ class DiffViewer(VerticalScroll):
     # ── Cursor watcher ───────────────────────────────────
 
     def watch_cursor_idx(self, old: int, new: int) -> None:
+        # Moving the cursor cancels any armed delete.
+        self._armed_delete_idx = None
         n = len(self.diff_file.lines)
         labels = self._labels
         if len(labels) != n:
@@ -371,6 +379,81 @@ class DiffViewer(VerticalScroll):
                 self.app.notify(f"Resolved [{c.short_id}]", severity="information")
                 return
         self.app.notify("No open comment on this line.", severity="warning")
+
+    def action_delete_comment(self) -> None:
+        n = len(self.diff_file.lines)
+        if not (0 <= self.cursor_idx < n):
+            return
+        line = self.diff_file.lines[self.cursor_idx]
+        # Collect this human's deletable comments on the cursor line.
+        matches = [
+            c for c in self.store.get_comments(file=self.diff_file.new_path)
+            if c.author == "human" and (
+                (line.new_lineno is not None and c.new_lineno == line.new_lineno)
+                or (line.old_lineno is not None and c.old_lineno == line.old_lineno)
+            )
+        ]
+        if not matches:
+            self.app.notify("No comment of yours to delete on this line.", severity="warning")
+            self._armed_delete_idx = None
+            return
+        # Prefer open; pick newest by timestamp.
+        open_matches = [c for c in matches if c.status == "open"]
+        pool = open_matches if open_matches else matches
+        c = max(pool, key=lambda x: x.timestamp)
+
+        if self._armed_delete_idx != self.cursor_idx:
+            self._armed_delete_idx = self.cursor_idx
+            self.app.notify(f"Press d again to delete [{c.short_id}]", severity="warning")
+            return
+
+        self.store.delete(c.id)
+        try:
+            self.app.query_one(FileTree).refresh_stats()
+        except Exception:
+            pass
+        self._refresh_inline_comments()
+        self.app.notify(f"Deleted [{c.short_id}]", severity="information")
+        self._armed_delete_idx = None
+
+    # ── Comment navigation ───────────────────────────────
+
+    def _commented_line_idxs(self, open_only: bool = False) -> List[int]:
+        """Sorted list of label idxs that have comments (optionally open-only)."""
+        idxs: Dict[int, bool] = {}  # idx -> has_open
+        for c in self.store.get_comments(file=self.diff_file.new_path):
+            idx = self._find_line_idx(c)
+            if idx is None:
+                continue
+            is_open = c.status == "open"
+            idxs[idx] = idxs.get(idx, False) or is_open
+        if open_only:
+            return sorted(i for i, has_open in idxs.items() if has_open)
+        return sorted(idxs.keys())
+
+    def _goto_relative(self, open_only: bool, forward: bool) -> None:
+        targets = self._commented_line_idxs(open_only=open_only)
+        cur = self.cursor_idx
+        if forward:
+            nxt = next((i for i in targets if i > cur), None)
+        else:
+            nxt = next((i for i in reversed(targets) if i < cur), None)
+        if nxt is None:
+            self.app.notify("No more comments", severity="information")
+            return
+        self.cursor_idx = nxt
+
+    def action_next_comment(self) -> None:
+        self._goto_relative(open_only=False, forward=True)
+
+    def action_prev_comment(self) -> None:
+        self._goto_relative(open_only=False, forward=False)
+
+    def action_next_unresolved(self) -> None:
+        self._goto_relative(open_only=True, forward=True)
+
+    def action_prev_unresolved(self) -> None:
+        self._goto_relative(open_only=True, forward=False)
 
     def _after_comment(self, _: Any) -> None:
         try:
