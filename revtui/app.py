@@ -25,21 +25,41 @@ from .diff_parser import DiffFile, DiffLine, get_git_diff, parse_diff
 #  Diff line rendering
 # ──────────────────────────────────────────────
 
+# ── Unified glyphs / colors (shared across rendering) ──
+GLYPH_AGENT = "🤖"
+GLYPH_HUMAN = "👤"
+STATUS_OPEN = "●"
+STATUS_RESOLVED = "✓"
+COLOR_OPEN = "#d79921"      # amber — needs attention
+COLOR_RESOLVED = "green"
+
+# Bright cool accent for the selection bar
+_SELECTED_ACCENT = "#528bff"
+
 _STYLES = {
     "addition":    Style(color="bright_green",   bgcolor="#1a2d1a"),
     "deletion":    Style(color="bright_red",     bgcolor="#2d1a1a"),
     "hunk_header": Style(color="bright_cyan",    bgcolor="#0d1a2d"),
     "file_header": Style(color="bright_magenta", bgcolor="#1e0d2d"),
     "binary":      Style(color="yellow",         bgcolor="#2d2200"),
-    "context":     Style(color="#6b7280"),
+    "context":     Style(color="#8b93a3"),
 }
-_SELECTED_BG = "#3a3500"
 
 
-def make_line_text(line: DiffLine, selected: bool = False) -> Text:
+def make_line_text(
+    line: DiffLine,
+    selected: bool = False,
+    marker_status: Optional[str] = None,
+) -> Text:
+    """Render a diff line.
+
+    `marker_status` ("open" | "resolved" | None) overlays a comment status glyph
+    in the sign column without changing the 11-col gutter width.
+    """
     base = _STYLES.get(line.line_type, _STYLES["context"])
     if selected:
-        base = Style(color=base.color, bgcolor=_SELECTED_BG, bold=True)
+        # Keep the per-type tint (bgcolor); just bold and rely on the accent bar.
+        base = Style(color=base.color, bgcolor=base.bgcolor, bold=True)
 
     if line.line_type in ("hunk_header", "file_header", "binary"):
         old_s = new_s = "    "
@@ -50,14 +70,33 @@ def make_line_text(line: DiffLine, selected: bool = False) -> Text:
         sign = {"addition": "+", "deletion": "-"}.get(line.line_type, " ")
 
     t = Text(no_wrap=True, overflow="ellipsis")
-    t.append(f"{sign}{old_s} {new_s} ", style=base)
+
+    # Sign column (1 char): overlaid with a comment marker when present.
+    if marker_status == "open":
+        t.append(STATUS_OPEN, style=Style(color=COLOR_OPEN, bgcolor=base.bgcolor, bold=True))
+    elif marker_status == "resolved":
+        t.append(STATUS_RESOLVED, style=Style(color=COLOR_RESOLVED, bgcolor=base.bgcolor, bold=True))
+    else:
+        t.append(sign, style=base)
+
+    # old (4) + space (1) + new (4) + space (1) = gutter is 11 cols total.
+    t.append(f"{old_s} {new_s} ", style=base)
     t.append(line.content, style=base)
+
+    if selected:
+        # Prepend a left accent bar in a bright cool color as a cursor indicator.
+        bar = Text("▎", style=Style(color=_SELECTED_ACCENT, bold=True))
+        bar.append_text(t)
+        t = bar
     return t
 
 
 # ──────────────────────────────────────────────
 #  Inline comment rendering
 # ──────────────────────────────────────────────
+
+_GUTTER_W = 11  # diff gutter width: sign(1)+old(4)+space(1)+new(4)+space(1)
+
 
 def make_inline_comment_widget(c: Comment) -> Static:
     """Render a comment as a Static widget for inline display in the diff."""
@@ -66,27 +105,30 @@ def make_inline_comment_widget(c: Comment) -> Static:
     author_style = Style(color="cyan") if is_agent else Style(color="yellow")
     content_style = Style(dim=True) if c.status == "resolved" else Style(color="#d4d4d4")
     dim = Style(dim=True)
-    status_icon = "✓" if c.status == "resolved" else "●"
-    status_style = Style(color="green") if c.status == "resolved" else Style(color="white")
+    resolved = c.status == "resolved"
+    status_icon = STATUS_RESOLVED if resolved else STATUS_OPEN
+    status_style = Style(color=COLOR_RESOLVED) if resolved else Style(color=COLOR_OPEN)
+
+    gutter = " " * _GUTTER_W
 
     t = Text(no_wrap=False)
-    t.append("      ┌─ ", style=border_style)
+    t.append(f"{gutter}┌─ ", style=border_style)
     t.append(c.author_label, style=author_style)
     t.append(f"  {c.line_ref}  ", style=dim)
     t.append(c.timestamp[:16].replace("T", " "), style=dim)
     t.append(f"  [{c.short_id}]\n", style=dim)
 
     for text_line in c.content.splitlines():
-        t.append("      │  ", style=border_style)
+        t.append(f"{gutter}│  ", style=border_style)
         t.append(text_line, style=content_style)
         t.append("\n")
 
     if c.line_content:
-        t.append("      │  ", style=border_style)
+        t.append(f"{gutter}│  ", style=border_style)
         t.append(f"» {c.line_content[:80]}", style=dim)
         t.append("\n")
 
-    t.append("      └─ ", style=border_style)
+    t.append(f"{gutter}╰─ ", style=border_style)
     t.append(f"{status_icon} {c.status}", style=status_style)
 
     css_class = "inline-comment-agent" if is_agent else "inline-comment-human"
@@ -147,7 +189,7 @@ class FileTree(Tree):
                 self._file_nodes[idx] = node
 
     def _file_label(self, idx: int, df: DiffFile) -> Text:
-        """Rich label: filename  +adds  -dels  H:n  A:n"""
+        """Rich label: filename  +adds  -dels  👤 n  🤖 n"""
         comments = self.store.get_comments(file=df.new_path)
         human_open = sum(1 for c in comments if c.author == "human" and c.status == "open")
         agent_open = sum(1 for c in comments if c.author == "agent" and c.status == "open")
@@ -164,9 +206,9 @@ class FileTree(Tree):
             t.append(f"-{df.deletions}", style="red")
 
         if human_open:
-            t.append(f"  H:{human_open}", style="bold yellow")
+            t.append(f"  {GLYPH_HUMAN} {human_open}", style="bold yellow")
         if agent_open:
-            t.append(f"  A:{agent_open}", style="bold cyan")
+            t.append(f"  {GLYPH_AGENT} {agent_open}", style="bold cyan")
 
         return t
 
@@ -224,13 +266,35 @@ class DiffViewer(VerticalScroll):
         self.diff_file = diff_file
         self.store = store
         self._labels: List[Label] = []
+        # idx -> "open" | "resolved": comment marker shown in the gutter for that line.
+        self._line_markers: Dict[int, str] = {}
+
+    def _compute_markers(self) -> Dict[int, str]:
+        """Map each diff-line idx to a marker status based on its comments.
+
+        "open" wins over "resolved" when a line has both.
+        """
+        markers: Dict[int, str] = {}
+        for c in self.store.get_comments(file=self.diff_file.new_path):
+            idx = self._find_line_idx(c)
+            if idx is None:
+                continue
+            if c.status == "open":
+                markers[idx] = "open"
+            elif markers.get(idx) != "open":
+                markers[idx] = "resolved"
+        return markers
 
     def compose(self) -> ComposeResult:
         if not self.diff_file.lines:
             yield Static("[dim]No diff content for this file.[/dim]")
             return
+        self._line_markers = self._compute_markers()
         for i, line in enumerate(self.diff_file.lines):
-            lbl = Label(make_line_text(line), id=f"dl-{i}")
+            lbl = Label(
+                make_line_text(line, marker_status=self._line_markers.get(i)),
+                id=f"dl-{i}",
+            )
             self._labels.append(lbl)
             yield lbl
 
@@ -253,10 +317,30 @@ class DiffViewer(VerticalScroll):
                 return i
         return None
 
+    def _refresh_markers(self) -> None:
+        """Recompute gutter markers and re-render any line whose marker changed."""
+        new_markers = self._compute_markers()
+        if new_markers == self._line_markers and len(self._labels) == len(self.diff_file.lines):
+            return
+        affected = set(new_markers) | set(self._line_markers)
+        self._line_markers = new_markers
+        if len(self._labels) != len(self.diff_file.lines):
+            return
+        for idx in affected:
+            if 0 <= idx < len(self._labels):
+                self._labels[idx].update(
+                    make_line_text(
+                        self.diff_file.lines[idx],
+                        selected=(idx == self.cursor_idx),
+                        marker_status=new_markers.get(idx),
+                    )
+                )
+
     def _refresh_inline_comments(self) -> None:
         """Remove all inline comment widgets and re-mount them after next render."""
         for w in list(self.query(".inline-comment")):
             w.remove()
+        self._refresh_markers()
         if self.diff_file.lines:
             self.call_after_refresh(self._mount_inline_comments)
 
@@ -287,9 +371,15 @@ class DiffViewer(VerticalScroll):
             return
 
         if 0 <= old < n:
-            labels[old].update(make_line_text(self.diff_file.lines[old], selected=False))
+            labels[old].update(make_line_text(
+                self.diff_file.lines[old], selected=False,
+                marker_status=self._line_markers.get(old),
+            ))
         if 0 <= new < n:
-            labels[new].update(make_line_text(self.diff_file.lines[new], selected=True))
+            labels[new].update(make_line_text(
+                self.diff_file.lines[new], selected=True,
+                marker_status=self._line_markers.get(new),
+            ))
             labels[new].scroll_visible()
 
     # ── Navigation actions ───────────────────────────────
@@ -502,7 +592,7 @@ class ReviewApp(App[None]):
     }
     Footer {
         background: #21252b;
-        color: #6b7280;
+        color: #8b93a3;
     }
     #main-body {
         height: 1fr;
