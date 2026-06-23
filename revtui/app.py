@@ -320,6 +320,12 @@ class DiffViewer(VerticalScroll):
         n = len(self.diff_file.lines)
         if 0 <= self.cursor_idx < n:
             line = self.diff_file.lines[self.cursor_idx]
+            if line.line_type in {"file_header", "hunk_header", "binary"}:
+                self.app.notify(
+                    "Can't comment on this line — pick a code or context line.",
+                    severity="warning",
+                )
+                return
             self.app.push_screen(
                 AddCommentScreen(self.diff_file, line, self.store),
                 callback=self._after_comment,
