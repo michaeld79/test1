@@ -452,11 +452,11 @@ _HELP = """\
   [yellow]r[/yellow]           Resolve open comment on cursor line
 
 [bold]Agent CLI[/bold]
-  [cyan]python -m revtui add-comment --file FILE --line LINE \\
+  [cyan]revtui add-comment --file FILE --line LINE \\
           --message "MSG" --agent-name NAME[/cyan]
-  [cyan]python -m revtui watch[/cyan]          Live comment feed
-  [cyan]python -m revtui list-comments[/cyan]  All comments (JSON: --json)
-  [cyan]python -m revtui status[/cyan]         Summary
+  [cyan]revtui watch[/cyan]          Live comment feed
+  [cyan]revtui list-comments[/cyan]  All comments (JSON: --json)
+  [cyan]revtui status[/cyan]         Summary
 
 [bold]Other[/bold]
   [yellow]s[/yellow]           Toggle file tree sidebar
