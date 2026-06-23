@@ -336,19 +336,26 @@ class DiffViewer(VerticalScroll):
         if not (0 <= self.cursor_idx < n):
             return
         line = self.diff_file.lines[self.cursor_idx]
-        for c in self.store.get_comments(file=self.diff_file.new_path):
-            if c.status == "open" and (
+        candidates = [
+            c
+            for c in self.store.get_comments(file=self.diff_file.new_path)
+            if c.status == "open"
+            and (
                 (line.new_lineno is not None and c.new_lineno == line.new_lineno)
                 or (line.old_lineno is not None and c.old_lineno == line.old_lineno)
-            ):
-                self.store.resolve(c.id)
-                try:
-                    self.app.query_one(FileTree).refresh_stats()
-                except Exception:
-                    pass
-                self._refresh_inline_comments()
-                self.app.notify(f"Resolved [{c.short_id}]", severity="information")
-                return
+            )
+        ]
+        if candidates:
+            # ISO timestamps sort lexicographically = chronologically.
+            c = max(candidates, key=lambda c: c.timestamp)
+            self.store.resolve(c.id)
+            try:
+                self.app.query_one(FileTree).refresh_stats()
+            except Exception:
+                pass
+            self._refresh_inline_comments()
+            self.app.notify(f"Resolved [{c.short_id}]", severity="information")
+            return
         self.app.notify("No open comment on this line.", severity="warning")
 
     def _after_comment(self, _: Any) -> None:
