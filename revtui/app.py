@@ -650,6 +650,8 @@ class ReviewApp(App[None]):
 
     def _poll_comments(self) -> None:
         """Reload comments; notify once per new arrival; refresh tree stats and current viewer."""
+        if len(self.screen_stack) > 1:
+            return  # a modal is open — don't toast/remount under it
         self.store.load()
         current = {c.id for c in self.store.all_comments}
         new_ids = current - self._known_ids
